@@ -1,6 +1,6 @@
 name: CI
 
-on:
+"on":
   push:
     branches: ["main", "master"]
   pull_request:
@@ -24,18 +24,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ✅ Ensure repo root is importable (makes `heart_disease_mlops` discoverable)
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=${GITHUB_WORKSPACE}" >> $GITHUB_ENV
+
+      # ✅ Quick sanity check to fail early with a clear error
+      - name: Sanity check package import
+        run: |
+          python -c "import sys; print(sys.path)"
+          python -c "import heart_disease_mlops; import heart_disease_mlops.src.train; print('Import OK')"
+
       - name: Run unit tests
         run: |
           pytest -q
 
       - name: Train model
         run: |
-          python -m heart_disease_mlops.src.train --data-path heart_disease_mlops/data/heart.csv --output-dir heart_disease_mlops/models
+          python -m heart_disease_mlops.src.train \
+            --data-path heart_disease_mlops/data/heart.csv \
+            --output-dir heart_disease_mlops/models
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v4
         with:
           name: model-artifacts
           path: |
-            heart_disease_mlops/models
-            heart_disease_mlops/models/metrics.json
+            heart_disease_mlops/models/**
