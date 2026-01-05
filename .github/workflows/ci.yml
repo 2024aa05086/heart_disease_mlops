@@ -24,31 +24,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔍 Print structure so we KNOW where the package is
-      - name: Debug repo structure
-        run: |
-          pwd
-          ls -la
-          echo "---- find train.py ----"
-          find . -maxdepth 5 -type f -name "train.py" -print
-          echo "---- find heart_disease_mlops dirs ----"
-          find . -maxdepth 4 -type d -name "heart_disease_mlops" -print
-          echo "---- find __init__.py ----"
-          find . -maxdepth 6 -type f -name "__init__.py" -print
+      # repo root must be on sys.path so "import src" works
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=${GITHUB_WORKSPACE}" >> $GITHUB_ENV
 
-      # ✅ Cover both layouts:
-      # - repo root contains heart_disease_mlops/
-      # - src/heart_disease_mlops/
-      # - heart_disease_mlops/heart_disease_mlops/ (double nested)
-      - name: Set PYTHONPATH (robust)
+      - name: Sanity check import
         run: |
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/heart_disease_mlops" >> $GITHUB_ENV
-
-      - name: Sanity check package import
-        run: |
-          python -c "import sys; print('PYTHONPATH=', __import__('os').environ.get('PYTHONPATH')); print(sys.path)"
-          python -c "import heart_disease_mlops; print('heart_disease_mlops imported from:', heart_disease_mlops.__file__)"
-          python -c "import heart_disease_mlops.src.train; print('Import OK')"
+          python -c "import sys; print(sys.path)"
+          python -c "import src; import src.train; print('Import OK')"
 
       - name: Run unit tests
         run: |
@@ -56,13 +39,14 @@ jobs:
 
       - name: Train model
         run: |
-          python -m heart_disease_mlops.src.train \
-            --data-path heart_disease_mlops/data/heart.csv \
-            --output-dir heart_disease_mlops/models
+          python -m src.train \
+            --data-path data/heart.csv \
+            --output-dir models
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v4
         with:
           name: model-artifacts
           path: |
-            heart_disease_mlops/models/**
+            models/**
+            models/metrics.json
