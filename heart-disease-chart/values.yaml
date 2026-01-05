@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: heart-disease-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+containerPort: 8000
+
+service:
+  name: heart-disease-service
+  type: NodePort
+  port: 80
+  targetPort: 8000
+  nodePort: 30007
+
+nameOverride: ""
+fullnameOverride: ""
