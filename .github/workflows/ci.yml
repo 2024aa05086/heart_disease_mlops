@@ -50,3 +50,12 @@ jobs:
           path: |
             models/**
             models/metrics.json
+
+      - name: Build Docker image
+        run: |
+                docker build \
+                  -t heart-disease-mlops:latest \
+                  .
+
+      - name: List Docker images
+        run: docker images
