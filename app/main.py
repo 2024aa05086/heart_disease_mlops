@@ -27,6 +27,12 @@ from pydantic import BaseModel, Field
 import numpy as np
 import logging
 
+import time
+from starlette.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +41,40 @@ logger = logging.getLogger(__name__)
 MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
 MODEL_FILE = None
 PREPROCESSOR_FILE = None
+
+# ---------------------------
+# Prometheus Monitoring
+# ---------------------------
+
+# General HTTP metrics
+HTTP_REQUESTS_TOTAL = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status_code"],
+)
+
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+    # buckets tuned for APIs; adjust if needed
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+)
+
+# App-specific metrics for predictions
+PREDICTIONS_TOTAL = Counter(
+    "heart_disease_predictions_total",
+    "Total predictions made",
+    ["result"],  # "success" or "error"
+)
+
+PREDICT_DURATION_SECONDS = Histogram(
+    "heart_disease_predict_duration_seconds",
+    "Latency for /predict handler in seconds",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+)
+
+
 
 def _find_latest_model(directory: Path) -> Path:
     """Return the path to the first model file found in the directory."""
@@ -78,6 +118,39 @@ class HeartData(BaseModel):
 app = FastAPI(title="Heart Disease Prediction API", version="1.0.0")
 
 
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # NOTE: avoid high-cardinality labels. Keep 'path' stable.
+        # Using request.url.path is fine here because your routes are fixed (/predict, /).
+        method = request.method
+        path = request.url.path
+
+        start = time.perf_counter()
+        status_code = 500
+
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        except Exception:
+            # will be handled by FastAPI exception handlers; still record as 500
+            raise
+        finally:
+            elapsed = time.perf_counter() - start
+            HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status_code=str(status_code)).inc()
+            HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(elapsed)
+
+
+# Register middleware
+app.add_middleware(PrometheusMiddleware)
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus scrape endpoint."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     """Load the model and preprocessing pipeline on startup."""
@@ -104,6 +177,7 @@ async def predict(data: HeartData) -> dict[str, float | int]:
     Returns:
         A dictionary containing the predicted class (0/1) and probability of heart disease.
     """
+    start = time.perf_counter()
     try:
         # Convert input data to DataFrame with one row
         input_df = data.model_dump()
@@ -118,5 +192,8 @@ async def predict(data: HeartData) -> dict[str, float | int]:
         logger.info("Prediction made successfully")
         return {"prediction": pred, "probability": float(prob)}
     except Exception as exc:
+        PREDICTIONS_TOTAL.labels(result="error").inc()
         logger.exception("Error during prediction: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        PREDICT_DURATION_SECONDS.observe(time.perf_counter() - start)
