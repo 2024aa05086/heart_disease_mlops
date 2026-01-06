@@ -11,3 +11,4 @@ pytest
 python-dotenv
 typer
 gunicorn
+prometheus_client
